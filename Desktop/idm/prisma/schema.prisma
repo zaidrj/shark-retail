@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  whatsappNumber      String                @id
+  name                String?
+  address             String?
+  cancellationCount   Int                   @default(0)
+  conversationHistory ConversationHistory[]
+  orders              Order[]
+}
+
+model Order {
+  id        String   @id @default(uuid())
+  whatsappNumber String
+  details   String
+  status    String   @default("placed")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [whatsappNumber], references: [whatsappNumber])
+}
+
+model ConversationHistory {
+  id        String   @id @default(uuid())
+  whatsappNumber String
+  role      String
+  content   String
+  timestamp DateTime @default(now())
+  user      User     @relation(fields: [whatsappNumber], references: [whatsappNumber])
+}

@@ -1,0 +1,214 @@
+import os
+from dotenv import load_dotenv, find_dotenv
+from prisma import Prisma
+try:
+    from agents import Agent, RunConfig, AsyncOpenAI, OpenAIChatCompletionsModel, Runner, handoff, ModelSettings
+    from agents.tool import function_tool
+except ImportError as e:
+    print(f"Failed to import necessary components from 'agents': {e}")
+    print("Please ensure the 'agents' library is correctly installed and structured.")
+   
+    Agent = None
+    RunConfig = None
+    AsyncOpenAI = None
+    OpenAIChatCompletionsModel = None
+    Runner = None
+    function_tool = lambda f: f 
+
+# Load environment variables needed by the agent core (e.g., API keys)
+load_dotenv(find_dotenv())
+print("[agent_core.py] Environment variables loaded.")
+
+# --------------------------------------------------------------------------
+# Step 1: Provider, Step 2: Model, Step 3: Run Configuration 
+# --------------------------------------------------------------------------
+
+
+
+provider = AsyncOpenAI(
+    api_key=os.getenv("GOOGLE_API_KEY"),             
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+)
+
+model = OpenAIChatCompletionsModel(
+    model="gemini-2.0-flash", 
+    openai_client=provider,
+)
+
+run_config = RunConfig(
+    model=model,
+    model_provider=provider,
+    tracing_disabled=True
+)
+
+db = Prisma()
+print("[agent_core.py] Prisma DB instance created.")
+
+# Database Tools
+@function_tool
+async def get_cancellation_count(whatsapp_number: str) -> int:
+    print(f"[agent_core.py] get_cancellation_count called with whatsapp_number={whatsapp_number}")
+    if db is None:
+        raise RuntimeError("Database not initialized")
+    user = await db.user.find_unique(where={"whatsappNumber": whatsapp_number})
+    print(f"[agent_core.py] get_cancellation_count user: {user}")
+    return user.cancellationCount if user else 0
+
+@function_tool
+async def save_order(whatsapp_number: str, order_details: str) -> str:
+    """Save a new order for a user."""
+    if db is None:
+        raise RuntimeError("Database not initialized")
+    user = await db.user.find_unique(where={"whatsappNumber": whatsapp_number})
+    print(f"[agent_core.py] save_order user: {user}")
+    if not user:
+        user = await db.user.create(data={"whatsappNumber": whatsapp_number})
+        print(f"[agent_core.py] save_order created user: {user}")
+    order = await db.order.create(data={"whatsappNumber": whatsapp_number, "details": order_details})
+    print(f"[agent_core.py] save_order created order: {order}")
+    return f"Order {order.id} placed successfully! Thankyou for letting us serve."
+
+@function_tool
+async def cancel_order(whatsapp_number: str, order_id: str) -> str:
+    """Cancel an order and increment the user's cancellation count."""
+    if db is None:
+        raise RuntimeError("Database not initialized")
+    order = await db.order.find_unique(where={"id": order_id}, include={"user": True})
+    print(f"[agent_core.py] cancel_order order: {order}")
+    if order and order.user.whatsappNumber == whatsapp_number and order.status == "placed":
+        await db.order.update(where={"id": order_id}, data={"status": "cancelled"})
+        await db.user.update(where={"whatsappNumber": whatsapp_number}, data={"cancellationCount": {"increment": 1}})
+        print(f"[agent_core.py] cancel_order cancelled order and incremented cancellation count.")
+        return f"Order {order_id} cancelled."
+    print(f"[agent_core.py] cancel_order: Order not found or already cancelled.")
+    return "Order not found or already cancelled."
+
+@function_tool
+async def perfume_info(query: str) -> str:
+    """Provide comprehensive information about all available perfumes and the special bundle."""
+    all_perfumes_info = (
+        "Here are all the perfumes we offer at Elyscents:\n\n"
+        "INDIVIDUAL PERFUMES:\n"
+        "1. Salsa Spirit - Inspired by Creed Aventus\n"
+        "   A captivating fragrance with zesty lemon, pink pepper, apple, exotic pineapple, jasmine, patchouli, birch, ambroxan, cedarwood, oakmoss, and musk. Lasts up to 8 hours with strong sillage.\n\n"
+        "2. Royal Oud - A luxurious unisex scent\n"
+        "   Features saffron, nutmeg, lavender, agarwood (oud), patchouli, and musk. Lasts up to 8 hours with strong sillage.\n\n"
+        "3. Wild Essence - Inspired by Sauvage Dior\n"
+        "   Features Calabrian bergamot, spicy pepper, patchouli, elemi, lavender, geranium, cedarwood, and ambroxan. Affordable luxury with a lasting scent.\n\n"
+        "SPECIAL BUNDLE OFFER:\n"
+        "Our exclusive bundle includes all three 100ml scents (Salsa Spirit, Royal Oud, and Wild Essence) at a special discounted price - perfect for trying our complete collection!\n\n"
+        "All our perfumes are crafted with premium ingredients and offer exceptional longevity and sillage. Each scent is designed to be versatile and suitable for various occasions."
+    )
+    
+    # If query specifically asks about bundle, focus on bundle
+    if 'bundle' in query.lower():
+        bundle_info = (
+            "Our special bundle includes three 100ml scents:\n"
+            "1. Salsa Spirit - Inspired by Creed Aventus: A captivating fragrance with zesty lemon, pink pepper, apple, exotic pineapple, jasmine, patchouli, birch, ambroxan, cedarwood, oakmoss, and musk. Lasts up to 8 hours with strong sillage.\n"
+            "2. Royal Oud - A luxurious unisex scent with saffron, nutmeg, lavender, agarwood (oud), patchouli, and musk. Lasts up to 8 hours with strong sillage.\n"
+            "3. Wild Essence - Inspired by Sauvage Dior: Features Calabrian bergamot, spicy pepper, patchouli, elemi, lavender, geranium, cedarwood, and ambroxan. Affordable luxury with a lasting scent.\n\n"
+            "This bundle offers incredible value and lets you experience our complete collection!"
+        )
+        return f"Here's what I found about '{query}':\n{bundle_info}"
+    
+    # For any other query, return comprehensive information
+    return f"Here's what I found about '{query}':\n{all_perfumes_info}"
+
+@function_tool
+async def get_last_message(whatsapp_number: str = None) -> str:
+    """Retrieve the last message sent by the user. If whatsapp_number is not provided, extract it from the conversation context."""
+    if db is None:
+        raise RuntimeError("Database not initialized")
+    
+    # If whatsapp_number is not provided, try to extract from context
+    if not whatsapp_number:
+        return "I need your WhatsApp number to retrieve your last message. Please provide it."
+    
+    last_msg = await db.conversationhistory.find_first(
+        where={"whatsappNumber": whatsapp_number, "role": "user"},
+        order={"timestamp": "desc"}
+    )
+    if last_msg:
+        return f"Your last message was: '{last_msg.content}'"
+    return "No previous messages found."
+
+# Agents
+print("[agent_core.py] Creating agents...")
+
+# Specialized agents for specific tasks (used as tools by the main agent)
+greeting_agent = Agent(
+    name="GreetingAgent",
+    instructions="""Provide a warm, welcoming greeting to new customers. 
+- Welcome them to Elyscents with enthusiasm
+- Introduce our special bundle: three 100ml scents (Salsa Spirit, Royal Oud, Wild Essence) at a great price
+- Ask how you can assist them today
+- Always hand back to MainAgent after greeting""",
+)
+
+query_agent = Agent(
+    name="QueryAgent",
+    instructions="""Handle detailed perfume queries and product information.
+- Use perfume_info tool to provide comprehensive scent details
+- Highlight the special bundle offer
+- Encourage purchases by emphasizing quality and value
+- Always hand back to MainAgent after providing information
+- donot directly forward the answer of tool used, make it a good response to encourage user to buy more while being polite""",
+     model_settings=ModelSettings(
+        tool_choice="required"
+    ),
+    tools=[perfume_info]
+)
+
+order_agent = Agent(
+    name="OrderAgent",
+    instructions="""Handle the complete ordering process.
+- Collect order details (perfume, quantity, address)
+- Check cancellation count using get_cancellation_count
+- If eligible (count < 2), save order using save_order
+- Ask about add-ons or extra perfumes
+- Confirm complete order details
+- Always suggest the special bundle
+- Always hand back to MainAgent after order processing""",
+     model_settings=ModelSettings(
+        tool_choice="required"
+    ),
+    tools=[get_cancellation_count, save_order, cancel_order, get_last_message]
+    
+)
+
+# Main Agent - Orchestrator using other agents as tools
+main_agent = Agent(
+    name="MainAgent",
+    instructions="""You are Elyscents' main customer service agent and orchestrator. Handle the complete conversation flow with a polite, welcoming tone. Use the following agents as tools:
+- GreetingAgent: For greeting and welcoming new users
+- QueryAgent: For answering perfume-related queries and encouraging purchases e.g: which perfume doyou have? which perfume is best for me?
+- OrderAgent: For handling orders, add-ons, confirmations, and cancellations
+
+CONVERSATION FLOW:
+1. GREETING: If this is a new conversation or user says hello, use greet_user tool.
+2. PERFUME QUERIES: If user asks about perfumes, use provide_information_regarding_perfumes tool.
+3. ORDERING: If user wants to order or cancel, use handle_order tool.
+4. HISTORY: If user asks about previous messages, use handle_order tool (it has access to get_last_message tool).
+5. PERSISTENCE: Always maintain context from previous messages. Reference past conversations naturally using the get_last_message tool.
+
+Always be polite, encouraging, and helpful. Guide users through the complete purchase journey while maintaining conversation history.""",
+    model_settings=ModelSettings(
+        tool_choice="required",
+    ),
+    tools=[     greeting_agent.as_tool(
+                tool_name="greet_user",
+                tool_description="Provide a warm, welcoming greeting to new customers",
+                ),
+                query_agent.as_tool(
+                    tool_name="provide_information_regarding_perfumes",
+                    tool_description="Handle perfume queries and product information",
+                ),
+                order_agent.as_tool(
+                tool_name="handle_order",
+                tool_description="Handle the complete ordering process.",
+                ),
+                get_last_message
+           ]
+)
+
+print("[agent_core.py] MainAgent created.")
