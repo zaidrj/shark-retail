@@ -9,7 +9,7 @@ const SharkRetailLogo = () => (
   <img
     src="/images/sharks-retail-logo.png"
     alt="Shark Retail Logo"
-    className="h-12 w-auto"
+    className="h-16 w-auto"
   />
 );
 
@@ -37,11 +37,11 @@ const ChevronDownIcon = () => (
 
 const Header: React.FC = () => {
   const navLinks = [
-    'What We Do',
-    'Who We Help',
-    'Who We Are',
-    'How We Deliver',
-    'Join Shark Retail',
+    'Home Page',
+    'About Company',
+    'Automation Solutions',
+    'Additional Services',
+    'Contact Information',
   ];
 
   return (
@@ -67,17 +67,35 @@ const Header: React.FC = () => {
       */}
       <div className="container mx-auto flex items-center justify-between px-8 py-4">
         {/* Left Section */}
-        <div className="flex items-center gap-10">
-          <SharkRetailLogo />
-          <ThemeToggle />
+        <div className="flex items-center">
+          <div className="group relative">
+            <div className="flex items-center gap-0">
+              <div className="transition-transform duration-700 ease-in-out group-hover:-translate-x-2">
+                <SharkRetailLogo />
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 transition-all duration-700 ease-in-out transform translate-x-2 group-hover:translate-x-0">
+                <span className="font-bold text-lg">
+                  <span className="text-teal-400">Shark</span> <span className="text-white">Retail</span>
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Center Navigation */}
         <nav className="hidden lg:flex flex-1 justify-center">
-          <ul className="flex items-center gap-8 text-sm font-light uppercase tracking-wider">
+          <ul className="flex items-center gap-8 text-sm font-light tracking-wider">
             {navLinks.map((link) => (
               <li key={link}>
-                <a href="#" className="flex items-center gap-2 hover:text-teal-400 transition-colors">
+                <a 
+                  href={
+                    link === "Home Page" ? "/" : 
+                    link === "About Company" ? "/about" :
+                    link === "Contact Information" ? "/contact" : 
+                    "#"
+                  } 
+                  className="flex items-center gap-2 hover:text-teal-400 transition-colors"
+                >
                   {link}
                   <ChevronDownIcon />
                 </a>
@@ -91,12 +109,8 @@ const Header: React.FC = () => {
           <button className="border border-teal-400 bg-teal-400 text-white font-light py-3 px-6 rounded-full text-sm hover:bg-white hover:text-black transition-colors">
             Explore Careers
           </button>
-          <button className="border border-teal-400 text-teal-400 font-light py-3 px-6 rounded-full text-sm hover:bg-teal-400 hover:text-black transition-colors">
+          <a href="/contact" className="border border-teal-400 text-teal-400 font-light py-3 px-6 rounded-full text-sm hover:bg-teal-400 hover:text-black transition-colors">
             Let's Talk Business
-          </button>
-          <a href="#" className="hidden lg:flex items-center gap-2 text-sm font-light hover:text-teal-400 transition-colors">
-            Global
-            <ChevronDownIcon />
           </a>
         </div>
       </div>
